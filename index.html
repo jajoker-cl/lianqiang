@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>虚拟手枪 (舒适练枪版)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+        #container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+        #video-feed {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 160px;
+            height: 120px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            transform: scaleX(-1); 
+            opacity: 0.6;
+            z-index: 2;
+        }
+        #ui-layer {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 300px;
+            text-align: center;
+            z-index: 3;
+            pointer-events: none;
+        }
+        .hud-text {
+            color: #0ff;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 5px;
+            text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+        }
+        .power-bar-bg {
+            width: 100%;
+            height: 8px;
+            background: #222;
+            border: 1px solid #555;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .threshold-line {
+            position: absolute;
+            left: 70%; 
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #ff0000;
+            z-index: 5;
+        }
+        #power-bar-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #0ff, #00ff00);
+            transition: width 0.05s linear;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #0ff;
+            font-size: 18px;
+            z-index: 10;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+        #error-msg {
+            display: none;
+            color: #ff3333;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        #retry-btn {
+            display: none;
+            margin-top: 15px;
+            padding: 8px 16px;
+            background: #0ff;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 30px;
+            height: 30px;
+            border: 2px solid rgba(0, 255, 0, 0.8);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 100;
+            transition: top 0.05s ease-out, left 0.05s ease-out;
+        }
+        .dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #0f0;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #gesture-status {
+            font-size: 12px;
+            margin-top: 8px;
+            color: #666;
+            font-weight: bold;
+        }
+        .status-ok { color: #00ff00; }
+        .status-lock { color: #ff3300; }
+        .status-cd { color: #ffaa00; }
+        .status-warn { color: #ffff00; }
+
+        .hit-feedback {
+            position: absolute;
+            color: #fff;
+            font-weight: bold;
+            font-size: 24px;
+            pointer-events: none;
+            animation: floatUp 0.8s forwards;
+            text-shadow: 0 0 10px #ff0000;
+            z-index: 105;
+            white-space: nowrap;
+        }
+        @keyframes floatUp {
+            0% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+            100% { transform: translate(-50%, -50px) scale(1.2); opacity: 0; }
+        }
+    </style>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loading">
+        <div id="loading-text">系统初始化中...<br><small>AI模型加载中</small></div>
+        <div id="error-msg">无法访问摄像头。<br>请检查浏览器设置是否允许本页面使用摄像头。</div>
+        <button id="retry-btn" onclick="startCamera()">重试</button>
+    </div>
+    
+    <video id="video-feed" playsinline autoplay muted></video>
+    <div id="crosshair"><div class="dot"></div></div>
+    <div id="container"></div>
+
+    <div id="ui-layer">
+        <div class="hud-text">舒适练枪系统</div>
+        <div class="power-bar-bg">
+            <div class="threshold-line"></div>
+            <div id="power-bar-fill"></div>
+        </div>
+        <div id="gesture-status">等待摄像头...</div>
+        <div id="status-msg" style="color: yellow; margin-top: 5px; height: 20px;">READY</div>
+    </div>
+
+    <script>
+        // --- 1. 核心配置 ---
+        const config = {
+            gunPos: { x: 0.6, y: -0.5, z: -1.5 }, 
+            fireThreshold: 0.15, 
+            resetThreshold: 0.05,
+            maxRotation: 0.35, 
+            rotSmoothing: 0.1
+        };
+
+        let scene, camera, renderer;
+        let gunGroup, slideMesh, muzzleFlashMesh;
+        let targets = []; 
+        let raycaster = new THREE.Raycaster();
+        
+        let isShooting = false;
+        let slideOffset = 0;
+        
+        let lastPitch = 0; 
+        let lastShotTime = 0;
+        let currentPower = 0; 
+        
+        let triggerLocked = false;
+        let isGestureValid = false; 
+
+        let crosshairPos = { x: 0.5, y: 0.5 };
+
+        const targetQuaternion = new THREE.Quaternion();
+        const baseRotation = new THREE.Euler(0.1, 0, 0); 
+
+        // --- 2. 初始化场景 ---
+        function initScene() {
+            const container = document.getElementById('container');
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000510, 0.05); // 雾气稍微淡一点
+            
+            camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 0);
+            
+            renderer = new THREE.WebGLRenderer({ alpha: false, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // 灯光
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+            scene.add(ambientLight);
+            
+            // 靶场氛围灯
+            const targetLight = new THREE.PointLight(0x00ffff, 0.6, 30);
+            targetLight.position.set(0, 2, -5);
+            scene.add(targetLight);
+
+            const mainLight = new THREE.DirectionalLight(0xffddcc, 1.2);
+            mainLight.position.set(-2, 5, 2);
+            mainLight.castShadow = true;
+            scene.add(mainLight);
+
+            createGunModel();
+            createTargets(); 
+            
+            // 地面网格
+            const gridHelper = new THREE.GridHelper(60, 60, 0x004444, 0x001111);
+            gridHelper.position.y = -3; // 地面放低
+            scene.add(gridHelper);
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        // --- 3. 创建靶子系统 (舒适布局 + 颜值升级) ---
+        
+        // 辅助函数：绘制人形靶子贴图
+        function createBodyTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            // 背景透明
+            ctx.clearRect(0, 0, 256, 512);
+
+            // 外发光
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#00ccff";
+
+            // 绘制身体轮廓 (梯形+圆角矩形)
+            ctx.fillStyle = "rgba(0, 100, 255, 0.2)";
+            ctx.strokeStyle = "#00ccff";
+            ctx.lineWidth = 4;
+
+            ctx.beginPath();
+            // 肩膀
+            ctx.moveTo(40, 100); 
+            ctx.lineTo(216, 100);
+            // 躯干
+            ctx.lineTo(200, 480);
+            ctx.lineTo(56, 480);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // 内部科技线条
+            ctx.beginPath();
+            ctx.moveTo(40, 100); ctx.lineTo(128, 250); ctx.lineTo(216, 100);
+            ctx.strokeStyle = "rgba(0, 200, 255, 0.5)";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 胸口核心
+            ctx.beginPath();
+            ctx.arc(128, 180, 20, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(0, 255, 255, 0.5)";
+            ctx.fill();
+
+            const tex = new THREE.CanvasTexture(canvas);
+            return tex;
+        }
+
+        function createHeadTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+
+            ctx.clearRect(0, 0, 128, 128);
+            
+            // 外发光
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#ff3300";
+
+            // 红色靶心
+            ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
+            ctx.strokeStyle = "#ff0000";
+            ctx.lineWidth = 4;
+
+            // 外圈
+            ctx.beginPath();
+            ctx.arc(64, 64, 50, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fill();
+
+            // 内圈
+            ctx.beginPath();
+            ctx.arc(64, 64, 30, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255, 100, 100, 0.6)";
+            ctx.fill();
+            
+            // 中心点
+            ctx.beginPath();
+            ctx.arc(64, 64, 10, 0, Math.PI * 2);
+            ctx.fillStyle = "#ffffff";
+            ctx.fill();
+
+            const tex = new THREE.CanvasTexture(canvas);
+            return tex;
+        }
+
+        const bodyTex = createBodyTexture();
+        const headTex = createHeadTexture();
+
+        function createTargets() {
+            // 位置调整：更远 (z: -10)，更低 (y: -1.0 到 -1.5)
+            // 这样手平举准星就在靶子上
+            const positions = [
+                { x: -3.5, y: -1.0, z: -10 },
+                { x: 0,    y: -1.2, z: -10 }, // 中间稍微低一点，形成错落感
+                { x: 3.5,  y: -1.0, z: -10 }
+            ];
+
+            positions.forEach(pos => {
+                createSingleTarget(pos);
+            });
+        }
+
+        function createSingleTarget(pos) {
+            const targetGroup = new THREE.Group();
+            targetGroup.position.set(pos.x, pos.y, pos.z);
+
+            // --- 头部 ---
+            const headMat = new THREE.MeshBasicMaterial({ 
+                map: headTex,
+                transparent: true,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const headGeo = new THREE.PlaneGeometry(0.8, 0.8);
+            const head = new THREE.Mesh(headGeo, headMat);
+            head.position.y = 1.6; // 相对高度
+            head.name = "head"; 
+            head.userData = { parentGroup: targetGroup };
+            targetGroup.add(head);
+
+            // --- 身体 ---
+            const bodyMat = new THREE.MeshBasicMaterial({ 
+                map: bodyTex,
+                transparent: true,
+                side: THREE.DoubleSide,
+                depthWrite: false // 防止透明遮挡
+            });
+            const bodyGeo = new THREE.PlaneGeometry(1.5, 3.0);
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = 0; // 身体中心
+            body.name = "body";
+            body.userData = { parentGroup: targetGroup };
+            targetGroup.add(body);
+
+            // 属性
+            targetGroup.userData = {
+                hp: 2,
+                isDead: false,
+                originalPos: pos,
+                meshHead: head,
+                meshBody: body
+            };
+
+            // 浮动动画初始值
+            targetGroup.userData.floatOffset = Math.random() * 100;
+
+            scene.add(targetGroup);
+            targets.push(targetGroup);
+        }
+
+        // --- 4. 手枪建模 (保持不变) ---
+        function createGunModel() {
+            gunGroup = new THREE.Group();
+            gunGroup.position.set(config.gunPos.x, config.gunPos.y, config.gunPos.z);
+            scene.add(gunGroup);
+            const wrapper = new THREE.Group();
+            wrapper.rotation.y = Math.PI; 
+            gunGroup.add(wrapper);
+            const matDark = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.8 });
+            const matSilver = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.2, metalness: 0.9 });
+            const matGrip = new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.9 });
+            const grip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.4, 0.2), matGrip);
+            grip.position.set(0, -0.2, 0.05);
+            grip.rotation.x = 0.2; 
+            wrapper.add(grip);
+            const frame = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.6), matDark);
+            frame.position.set(0, 0, 0.15);
+            wrapper.add(frame);
+            const guard = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.01, 8, 16, 3), matDark);
+            guard.position.set(0, -0.1, 0.1);
+            guard.rotation.z = Math.PI / 2;
+            wrapper.add(guard);
+            slideMesh = new THREE.Group();
+            const slideBody = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.62), matSilver);
+            slideMesh.add(slideBody);
+            const sightR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.02), matDark);
+            sightR.position.set(0, 0.08, -0.28);
+            slideMesh.add(sightR);
+            const sightF = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.04, 0.02), matDark);
+            sightF.position.set(0, 0.08, 0.28);
+            slideMesh.add(sightF);
+            slideMesh.position.set(0, 0.1, 0.15);
+            wrapper.add(slideMesh);
+            const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.65, 12), matDark);
+            barrel.rotation.x = Math.PI / 2;
+            barrel.position.set(0, 0.08, 0.15);
+            wrapper.add(barrel);
+            const flashGeo = new THREE.PlaneGeometry(0.8, 0.8);
+            const flashTex = createFlashTexture(); 
+            const flashMat = new THREE.MeshBasicMaterial({ 
+                map: flashTex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+            });
+            muzzleFlashMesh = new THREE.Mesh(flashGeo, flashMat);
+            muzzleFlashMesh.position.set(0, 0.1, 0.6); 
+            muzzleFlashMesh.visible = false;
+            wrapper.add(muzzleFlashMesh);
+        }
+
+        function createFlashTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const grd = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grd.addColorStop(0, 'rgba(255, 255, 200, 1)');
+            grd.addColorStop(0.4, 'rgba(255, 150, 0, 0.8)');
+            grd.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = grd;
+            ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // --- 5. 射击与命中逻辑 ---
+        function fire() {
+            const now = Date.now();
+            if (now - lastShotTime < 300) return; 
+            
+            lastShotTime = now;
+            isShooting = true;
+            triggerLocked = true;
+
+            muzzleFlashMesh.visible = true;
+            muzzleFlashMesh.material.opacity = 1;
+            muzzleFlashMesh.rotation.z = Math.random() * Math.PI; 
+            gunGroup.rotateX(0.15);
+
+            const msg = document.getElementById('status-msg');
+            msg.innerText = "BANG!";
+            msg.style.color = "red";
+
+            checkHit();
+
+            setTimeout(() => {
+                muzzleFlashMesh.material.opacity = 0;
+                muzzleFlashMesh.visible = false;
+                msg.innerText = "READY";
+                msg.style.color = "#0f0";
+            }, 60);
+        }
+
+        function checkHit() {
+            const mouse = new THREE.Vector2();
+            mouse.x = (crosshairPos.x * 2) - 1;
+            mouse.y = -(crosshairPos.y * 2) + 1; 
+
+            raycaster.setFromCamera(mouse, camera);
+
+            let hitObjects = [];
+            targets.forEach(t => {
+                if (!t.userData.isDead) {
+                    hitObjects.push(t.userData.meshHead); 
+                    hitObjects.push(t.userData.meshBody); 
+                }
+            });
+
+            const intersects = raycaster.intersectObjects(hitObjects);
+
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+                if(hit && hit.object) {
+                    const targetGroup = hit.object.userData.parentGroup;
+                    handleDamage(targetGroup, hit.object);
+                }
+            }
+        }
+
+        function handleDamage(target, hitMesh) {
+            const part = hitMesh.name;
+            let dmg = 0;
+            let feedbackText = "";
+            let color = "";
+
+            if (part === "head") {
+                dmg = 100; 
+                feedbackText = "HEADSHOT!";
+                color = "#ff3333";
+            } else if (part === "body") {
+                dmg = 1; 
+                feedbackText = "HIT";
+                color = "#00ffff";
+            }
+
+            target.userData.hp -= dmg;
+            showHitFeedback(feedbackText, color);
+
+            // 闪烁
+            hitMesh.material.opacity = 1.0;
+            setTimeout(() => {
+                if(!target.userData.isDead) {
+                    hitMesh.material.opacity = (part === 'head') ? 0.6 : 0.4;
+                }
+            }, 80);
+
+            if (target.userData.hp <= 0) {
+                killTarget(target);
+            }
+        }
+
+        function killTarget(target) {
+            target.userData.isDead = true;
+            target.visible = false; 
+
+            setTimeout(() => {
+                target.userData.hp = 2; 
+                target.userData.isDead = false;
+                target.visible = true;
+                
+                // 复活动画
+                target.position.y = -8;
+                let targetY = target.userData.originalPos.y;
+                let frame = 0;
+                const popUp = setInterval(() => {
+                    frame++;
+                    target.position.y += (targetY - target.position.y) * 0.1;
+                    if (frame > 60) {
+                        target.position.y = targetY;
+                        clearInterval(popUp);
+                    }
+                }, 16);
+            }, 2000); 
+        }
+
+        function showHitFeedback(text, color) {
+            const el = document.createElement('div');
+            el.className = 'hit-feedback';
+            el.innerText = text;
+            el.style.color = color;
+            el.style.left = (crosshairPos.x * 100) + "%";
+            el.style.top = (crosshairPos.y * 100) + "%";
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 800);
+        }
+
+        function updateGunMechanics() {
+            if (!gunGroup) return;
+            const maxRecoilZ = -0.15; 
+            const originalZ = 0.15;
+            if (isShooting) {
+                slideOffset -= 0.08;
+                if (slideOffset <= maxRecoilZ) {
+                    slideOffset = maxRecoilZ;
+                    isShooting = false;
+                }
+            } else {
+                slideOffset += 0.02;
+                if (slideOffset > 0) slideOffset = 0;
+            }
+            if (slideMesh) slideMesh.position.z = originalZ + slideOffset;
+            
+            // 浮动动画
+            const time = Date.now() * 0.001;
+            targets.forEach(t => {
+                if (!t.userData.isDead) {
+                    t.position.y = t.userData.originalPos.y + Math.sin(time + t.userData.floatOffset) * 0.15;
+                }
+            });
+        }
+
+        // --- 6. 手势识别 ---
+        
+        let stableVector = new THREE.Vector2(0, 1);
+        
+        function isFingerExtended(landmarks, fingerTipIdx, fingerMCPIdx, wristIdx) {
+            const tip = landmarks[fingerTipIdx];
+            const mcp = landmarks[fingerMCPIdx];
+            const wrist = landmarks[wristIdx];
+            const dTip = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+            const dMcp = Math.hypot(mcp.x - wrist.x, mcp.y - wrist.y);
+            return dTip > (dMcp * 1.2);
+        }
+
+        function onResults(results) {
+            document.getElementById('loading').style.display = 'none';
+            
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                currentPower = Math.max(0, currentPower - 0.2); 
+                updateUI();
+                gunGroup.quaternion.slerp(new THREE.Quaternion().setFromEuler(baseRotation), 0.05);
+                document.getElementById('gesture-status').innerText = "AI运行中 - 未检测到手";
+                document.getElementById('gesture-status').className = "status-warn";
+                triggerLocked = false;
+                return;
+            }
+
+            const landmarks = results.multiHandLandmarks[0];
+            const wrist = landmarks[0];
+            const middleMCP = landmarks[9]; 
+
+            const indexExtended = isFingerExtended(landmarks, 8, 5, 0);
+            if (indexExtended) {
+                isGestureValid = true;
+            } else {
+                isGestureValid = false;
+                document.getElementById('gesture-status').innerText = "手势: 锁定 [请伸出食指]";
+                document.getElementById('gesture-status').className = "status-lock";
+            }
+
+            // --- 准星映射优化 ---
+            // 1 - wrist.x 是水平翻转，符合直觉
+            crosshairPos.x = 1 - wrist.x; 
+            
+            // ★ 核心修改：Y轴偏移，让平举手时准星在中间
+            // wrist.y 通常在 0.5-0.8 之间（屏幕中下部）
+            // 我们希望当 wrist.y = 0.7 时，crosshairPos.y = 0.5 (屏幕中心)
+            // 所以加一个 offset
+            const yOffset = -0.25; 
+            crosshairPos.y = Math.max(0, Math.min(1, wrist.y + yOffset));
+            
+            const crosshairEl = document.getElementById('crosshair');
+            crosshairEl.style.left = (crosshairPos.x * 100) + "%";
+            crosshairEl.style.top = (crosshairPos.y * 100) + "%";
+
+            // 枪械随动
+            const screenX = (wrist.x - 0.5) * 2; 
+            const screenY = (wrist.y - 0.5) * 2; 
+            
+            const targetYaw = -screenX * config.maxRotation;  
+            const targetPitch = -screenY * config.maxRotation; 
+
+            const euler = new THREE.Euler(baseRotation.x + targetPitch, baseRotation.y + targetYaw, baseRotation.z, 'YXZ');
+            targetQuaternion.setFromEuler(euler);
+            gunGroup.quaternion.slerp(targetQuaternion, config.rotSmoothing);
+
+            // 开火检测
+            const pWrist = new THREE.Vector2(wrist.x, wrist.y);
+            const pMiddle = new THREE.Vector2(middleMCP.x, middleMCP.y);
+            const currentVec = new THREE.Vector2().subVectors(pMiddle, pWrist).normalize();
+            
+            if (stableVector.length() < 0.1) stableVector.copy(currentVec);
+
+            const impulse = stableVector.y - currentVec.y;
+            stableVector.lerp(currentVec, 0.15); 
+
+            if (impulse < config.resetThreshold) {
+                if (triggerLocked) {
+                    triggerLocked = false;
+                     document.getElementById('gesture-status').innerText = "就绪 - 等待甩动";
+                     document.getElementById('gesture-status').className = "status-ok";
+                }
+            }
+
+            if (triggerLocked) {
+                 document.getElementById('gesture-status').innerText = "扳机锁定 [请稳住或复位]";
+                 document.getElementById('gesture-status').className = "status-cd";
+            } else if (isGestureValid) {
+                 document.getElementById('gesture-status').innerText = "瞄准中...";
+                 document.getElementById('gesture-status').className = "status-ok";
+            }
+
+            if (impulse > config.fireThreshold && isGestureValid && !triggerLocked) {
+                fire();
+            }
+
+            let rawPower = impulse / config.fireThreshold;
+            if (rawPower < 0.2) rawPower = 0; 
+            if (rawPower > currentPower) currentPower = rawPower; 
+            else currentPower += (rawPower - currentPower) * 0.3; 
+            
+            updateUI();
+        }
+
+        function updateUI() {
+            const bar = document.getElementById('power-bar-fill');
+            let displayWidth = currentPower * 70; 
+            if (displayWidth > 100) displayWidth = 100;
+            bar.style.width = displayWidth + "%";
+            
+            if (!isGestureValid) {
+                bar.style.background = "#555"; 
+            } else if (triggerLocked) {
+                bar.style.background = "#ffaa00"; 
+            } else if (currentPower >= 0.95) {
+                bar.style.background = "#ff3300"; 
+                bar.style.boxShadow = "0 0 10px #ff0000";
+            } else {
+                bar.style.background = "linear-gradient(90deg, #0ff, #00ff00)";
+                bar.style.boxShadow = "none";
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            updateGunMechanics();
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        initScene();
+        animate();
+        
+        let cameraUtils;
+        const videoElement = document.getElementById('video-feed');
+        function startCamera() {
+            document.getElementById('loading-text').style.display = 'block';
+            document.getElementById('error-msg').style.display = 'none';
+            document.getElementById('retry-btn').style.display = 'none';
+
+            const hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 0, 
+                minDetectionConfidence: 0.5, 
+                minTrackingConfidence: 0.5
+            });
+            hands.onResults(onResults);
+            
+            cameraUtils = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: 640, height: 480 
+            });
+            cameraUtils.start().then(() => {
+                document.getElementById('loading-text').innerText = "AI模型已加载 - 请伸手";
+            }).catch(err => {
+                document.getElementById('loading-text').style.display = 'none';
+                document.getElementById('error-msg').style.display = 'block';
+                document.getElementById('retry-btn').style.display = 'inline-block';
+            });
+        }
+        startCamera();
+    </script>
+</body>
+</html>
